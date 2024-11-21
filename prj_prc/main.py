@@ -10,6 +10,7 @@ import torch
 
 if __name__ == "__main__":
 
+    # configs
     train_size = .7
     test_size = .15
     val_size = .15
@@ -24,9 +25,11 @@ if __name__ == "__main__":
     else "cpu"
     )
 
+    # fetch_data
     data = fetch_california_housing()
     X, y = data.data, data.target
     
+    # data prep for model
     data_prapare = DataPreparation(X, y, train_size, test_size, val_size)
     X_train, X_test, X_val, y_train, y_test, y_val = data_prapare.prepare()
 
@@ -34,16 +37,17 @@ if __name__ == "__main__":
     test_tensors = MakeDataset(X_test, y_test)
     val_tensors = MakeDataset(X_val, y_val)
 
-
     train_loader = DataLoader(train_tensors, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_tensors, batch_size=batch_size, shuffle=False)
 
+    # init model, loss and optimizer
     input_dim = X_train.shape[1]
     model = Model(input_dim=input_dim)
 
     loss_func = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 
+    # train model
     trainer = Trainer(
         model=model,
         train_loader=train_loader,
