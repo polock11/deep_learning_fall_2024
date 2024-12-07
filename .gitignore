@@ -2,3 +2,4 @@ venv/
 .DS_Store/
 assignments/data/
 pizza_steak_classification/data/
+.DS_Store
