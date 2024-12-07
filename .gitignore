@@ -1,3 +1,4 @@
 venv/
 .DS_Store/
 assignments/data/
+pizza_stake_classification/data/
