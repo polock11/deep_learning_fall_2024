@@ -400,9 +400,10 @@ if __name__ == '__main__':
     print('Pipeline Mode:', mode)
 
     # Create datasets
-    train_dataset = RetinopathyDataset('./DeepDRiD/train.csv', './DeepDRiD/train/', transform_train, mode)
-    val_dataset = RetinopathyDataset('./DeepDRiD/val.csv', './DeepDRiD/val/', transform_test, mode)
-    test_dataset = RetinopathyDataset('./DeepDRiD/test.csv', './DeepDRiD/test/', transform_test, mode, test=True)
+
+    train_dataset = RetinopathyDataset('./final_project/data/DeepDRiD/train.csv', './final_project/data/DeepDRiD/train/', transform_train, mode)
+    val_dataset = RetinopathyDataset('./final_project/data/DeepDRiD/val.csv', './final_project/data/DeepDRiD/val/', transform_test, mode)
+    test_dataset = RetinopathyDataset('./final_project/data/DeepDRiD/test.csv', './final_project/data/DeepDRiD/test/', transform_test, mode, test=True)
 
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -413,7 +414,7 @@ if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss()
 
     # Use GPU device is possible
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
     print('Device:', device)
 
     # Move class weights to the device
@@ -427,11 +428,11 @@ if __name__ == '__main__':
     model = train_model(
         model, train_loader, val_loader, device, criterion, optimizer,
         lr_scheduler=lr_scheduler, num_epochs=num_epochs,
-        checkpoint_path='./model_1.pth'
+        checkpoint_path='./final_project/models/model_1.pth'
     )
 
     # Load the pretrained checkpoint
-    state_dict = torch.load('./model_1.pth', map_location='cpu')
+    state_dict = torch.load('./final_project/models/model_1.pth', map_location='cpu')
     model.load_state_dict(state_dict, strict=True)
 
     # Make predictions on testing set and save the prediction results
