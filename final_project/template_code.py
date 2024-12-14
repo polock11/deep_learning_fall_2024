@@ -2,7 +2,7 @@ import copy
 import os
 import random
 import sys
-
+import cv2
 import numpy as np
 import pandas as pd
 import torch
@@ -158,7 +158,48 @@ class FundRandomRotate:
             return transforms.functional.rotate(img, angle)
         return img
 
+class GaussianBlur:
+    def __init__(self, kernel_size=(5, 5), sigma=(0.1, 2.0)):
+        self.kernel_size = kernel_size
+        self.sigma = sigma
 
+    def __call__(self, img):
+        if random.random() > 0.5:  # Apply Gaussian Blur with 50% probability
+            return transforms.functional.gaussian_blur(img, kernel_size=self.kernel_size, sigma=random.uniform(*self.sigma))
+        return img
+
+class CLAHE:
+    def __init__(self, clip_limit=2.0, tile_grid_size=(8, 8)):
+        self.clip_limit = clip_limit
+        self.tile_grid_size = tile_grid_size
+
+    def __call__(self, img):
+        if random.random() > 0.5:  # Apply CLAHE with 50% probability
+            img_np = np.array(img)
+            img_lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
+            l, a, b = cv2.split(img_lab)
+            clahe = cv2.createCLAHE(clipLimit=self.clip_limit, tileGridSize=self.tile_grid_size)
+            l = clahe.apply(l)
+            img_lab = cv2.merge((l, a, b))
+            img_np = cv2.cvtColor(img_lab, cv2.COLOR_LAB2RGB)
+            return Image.fromarray(img_np)
+        return img
+
+'''
+transform_train = transforms.Compose([
+    transforms.Resize((256, 256)),
+    transforms.RandomCrop((224, 224)),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandomVerticalFlip(p=0.5),
+    transforms.RandomRotation(degrees=30),
+    GaussianBlur(kernel_size=(5, 5), sigma=(0.1, 2.0)),  # Add Gaussian Blur
+    CLAHE(clip_limit=2.0, tile_grid_size=(8, 8)),  # Add CLAHE for enhanced contrast
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+'''
 transform_train = transforms.Compose([
     transforms.Resize((256, 256)),
     transforms.RandomCrop((210, 210)),
@@ -170,6 +211,7 @@ transform_train = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
+
 
 transform_test = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -400,9 +442,16 @@ if __name__ == '__main__':
 
     # Create datasets
 
-    train_dataset = RetinopathyDataset('./final_project/data/DeepDRiD/train.csv', './final_project/data/DeepDRiD/train/', transform_train, mode)
-    val_dataset = RetinopathyDataset('./final_project/data/DeepDRiD/val.csv', './final_project/data/DeepDRiD/val/', transform_test, mode)
-    test_dataset = RetinopathyDataset('./final_project/data/DeepDRiD/test.csv', './final_project/data/DeepDRiD/test/', transform_test, mode, test=True)
+    train_dir = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/data/DeepDRiD/train/"
+    train_ann_file = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/data/DeepDRiD/train.csv"
+    val_dir = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/data/DeepDRiD/val/"
+    val_ann_file = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/data/DeepDRiD/val.csv"
+    test_dir = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/data/DeepDRiD/test"
+    test_ann_file = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/data/DeepDRiD/test.csv"
+
+    train_dataset = RetinopathyDataset(ann_file=train_ann_file, image_dir=train_dir, mode=mode, transform=transform_train)
+    val_dataset = RetinopathyDataset(ann_file=val_ann_file, image_dir=val_dir, mode=mode, transform=transform_test)
+    test_dataset = RetinopathyDataset(ann_file=test_ann_file, image_dir=test_dir, mode=mode, transform=transform_test, test=True)
 
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -413,11 +462,22 @@ if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss()
 
     # Use GPU device is possible
-    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+    device = torch.device('cpu' if torch.backends.mps.is_available() else 'cpu')
     print('Device:', device)
 
     # Move class weights to the device
+    state_dict_path = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/models/train_with_APTOS.pth"
+    state_dict = torch.load(state_dict_path, map_location='cpu')
+    model.load_state_dict(state_dict, strict=True)
     model = model.to(device)
+    
+    # Freeze all layers except the final fully connected (fc) layer
+    for param in model.backbone.parameters():
+        param.requires_grad = False
+
+    # Ensure only the `fc` layer is trainable
+    for param in model.fc.parameters():
+        param.requires_grad = True
 
     # Optimizer and Learning rate scheduler
     optimizer = torch.optim.Adam(params=model.parameters(), lr=learning_rate)
@@ -427,12 +487,16 @@ if __name__ == '__main__':
     model = train_model(
         model, train_loader, val_loader, device, criterion, optimizer,
         lr_scheduler=lr_scheduler, num_epochs=num_epochs,
-        checkpoint_path='./final_project/models/model_1.pth'
+        checkpoint_path='/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/models/t3b.pth'
     )
 
     # Load the pretrained checkpoint
-    state_dict = torch.load('./final_project/models/model_1.pth', map_location='cpu')
+    state_dict = torch.load('/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/models/t3b.pth', map_location='cpu')
     model.load_state_dict(state_dict, strict=True)
 
     # Make predictions on testing set and save the prediction results
-    evaluate_model(model, test_loader, device, test_only=True)
+    pred_path = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/data/results/t3b_pred.csv"
+    evaluate_model(model, test_loader, device, test_only=True, prediction_path=pred_path)
+    # [Val] Best kappa: 0.7718, Epoch 10
+    # [Val] Kappa: 0.8176 Accuracy: 0.6625 Precision: 0.6530 Recall: 0.6625, Epoch 18 GausBlur_CLAHE
+    # [Val] Kappa: 0.7306 Accuracy: 0.5500 Precision: 0.4860 Recall: 0.5500, Epoch 19 tb3_train with DeepDiR on the trained model with APTOS
