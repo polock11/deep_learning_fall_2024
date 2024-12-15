@@ -13,9 +13,10 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import models, transforms
 from torchvision.transforms.functional import to_pil_image
 from tqdm import tqdm
+import torch.nn.functional as F
 
 # Hyper Parameters
-batch_size = 24
+batch_size = 32
 num_classes = 5  # 5 DR levels
 learning_rate = 0.0001
 num_epochs = 20
@@ -244,7 +245,6 @@ def train_model(model, train_loader, val_loader, device, criterion, optimizer, l
                 labels = labels.to(device)
 
                 optimizer.zero_grad()
-
                 outputs = model(images)
                 loss = criterion(outputs, labels.long())
 
@@ -367,6 +367,126 @@ def compute_metrics(preds, labels, per_class=False):
     return kappa, accuracy, precision, recall
 
 
+class SELayer(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(SELayer, self).__init__()
+        self.fc1 = nn.Conv2d(channel, channel // reduction, kernel_size=1)
+        self.fc2 = nn.Conv2d(channel // reduction, channel, kernel_size=1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        # Global Average Pooling
+        y = F.adaptive_avg_pool2d(x, (1, 1))
+        y = self.fc1(y)
+        y = F.relu(y)
+        y = self.fc2(y)
+        y = self.sigmoid(y)
+        # Scale the input with the attention weights
+        return x * y
+
+# ResNet18 with Channel Attention (SE Block)
+class MyModel(nn.Module):
+    def __init__(self, num_classes=5):
+        super(MyModel, self).__init__()
+        self.resnet18 = models.resnet18(pretrained=True)
+        
+        # Replace the final fully connected layer to match num_classes
+        self.resnet18.fc = nn.Linear(self.resnet18.fc.in_features, num_classes)
+        
+        # Apply SE Blocks after each residual block
+        self.se1 = SELayer(64)
+        self.se2 = SELayer(128)
+        self.se3 = SELayer(256)
+        self.se4 = SELayer(512)
+
+    def forward(self, x):
+        # Apply SE blocks after the corresponding residual blocks
+        x = self.resnet18.conv1(x)
+        x = self.resnet18.bn1(x)
+        x = self.resnet18.relu(x)
+        x = self.resnet18.maxpool(x)
+
+        x = self.resnet18.layer1(x)
+        x = self.se1(x)  # Apply SE block after layer1
+
+        x = self.resnet18.layer2(x)
+        x = self.se2(x)  # Apply SE block after layer2
+
+        x = self.resnet18.layer3(x)
+        x = self.se3(x)  # Apply SE block after layer3
+
+        x = self.resnet18.layer4(x)
+        x = self.se4(x)  # Apply SE block after layer4
+
+        x = self.resnet18.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.resnet18.fc(x)
+
+        return x
+
+"""
+class MyModel(nn.Module):
+    def __init__(self, num_classes=5, dropout_rate=0.5):
+        super(MyModel, self).__init__()
+
+        # Backbone (ResNet18)
+        self.backbone = models.resnet18(pretrained=True)
+        self.backbone.fc = nn.Identity()  # Remove the original classification layer
+
+        # Self-Attention Layer
+        self.attention = SelfAttention(512)  # 512 is the feature size from ResNet18
+
+        # Fully Connected Layers
+        self.fc = nn.Sequential(
+            nn.Linear(512, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(256, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(128, num_classes)
+        )
+
+    def forward(self, x):
+        # Extract features using ResNet18 backbone
+        x = self.backbone(x)
+
+        # Apply self-attention
+        x = self.attention(x)
+
+        # Pass through the fully connected layers
+        x = self.fc(x)
+        return x
+
+
+class SelfAttention(nn.Module):
+    def __init__(self, input_dim):
+        super(SelfAttention, self).__init__()
+        self.query = nn.Linear(input_dim, input_dim)
+        self.key = nn.Linear(input_dim, input_dim)
+        self.value = nn.Linear(input_dim, input_dim)
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, x):
+        # x is of shape [batch_size, input_dim]
+
+        # Compute Query, Key, and Value matrices
+        Q = self.query(x)  # [batch_size, input_dim]
+        K = self.key(x)    # [batch_size, input_dim]
+        V = self.value(x)  # [batch_size, input_dim]
+
+        # Compute attention scores (scaled dot-product attention)
+        attention_scores = torch.matmul(Q, K.transpose(-2, -1)) / (torch.sqrt(torch.tensor(Q.size(-1))))  # [batch_size, batch_size]
+        attention_weights = self.softmax(attention_scores)  # [batch_size, batch_size]
+
+        # Compute the attention output
+        attended_features = torch.matmul(attention_weights, V)  # [batch_size, input_dim]
+
+        return attended_features
+
+
+
 class MyModel(nn.Module):
     def __init__(self, num_classes=5, dropout_rate=0.5):
         super().__init__()
@@ -388,7 +508,7 @@ class MyModel(nn.Module):
         x = self.backbone(x)
         x = self.fc(x)
         return x
-
+"""
 
 class MyDualModel(nn.Module):
     def __init__(self, num_classes=5, dropout_rate=0.5):
@@ -462,15 +582,16 @@ if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss()
 
     # Use GPU device is possible
-    device = torch.device('cpu' if torch.backends.mps.is_available() else 'cpu')
+    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
     print('Device:', device)
 
     # Move class weights to the device
-    state_dict_path = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/models/train_with_APTOS.pth"
-    state_dict = torch.load(state_dict_path, map_location='cpu')
-    model.load_state_dict(state_dict, strict=True)
+    #state_dict_path = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/models/train_with_APTOS.pth"
+    #state_dict = torch.load(state_dict_path, map_location='cpu')
+    #model.load_state_dict(state_dict, strict=True)
     model = model.to(device)
     
+    """
     # Freeze all layers except the final fully connected (fc) layer
     for param in model.backbone.parameters():
         param.requires_grad = False
@@ -478,25 +599,27 @@ if __name__ == '__main__':
     # Ensure only the `fc` layer is trainable
     for param in model.fc.parameters():
         param.requires_grad = True
-
+    """
     # Optimizer and Learning rate scheduler
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.AdamW(params=model.parameters(), lr=learning_rate)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
     # Train and evaluate the model with the training and validation set
     model = train_model(
         model, train_loader, val_loader, device, criterion, optimizer,
         lr_scheduler=lr_scheduler, num_epochs=num_epochs,
-        checkpoint_path='/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/models/t3b.pth'
+        checkpoint_path='/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/models/t_c_1_channel_attention.pth'
     )
 
     # Load the pretrained checkpoint
-    state_dict = torch.load('/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/models/t3b.pth', map_location='cpu')
+    state_dict = torch.load('/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/models/t_c_1_channel_attention.pth', map_location='cpu')
     model.load_state_dict(state_dict, strict=True)
 
     # Make predictions on testing set and save the prediction results
-    pred_path = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/data/results/t3b_pred.csv"
+    pred_path = "/Users/shakibibnashameem/Documents/Practice/deep_learning_fall_2024/final_project/data/results/t_c_1_channel_attention_pred.csv"
     evaluate_model(model, test_loader, device, test_only=True, prediction_path=pred_path)
     # [Val] Best kappa: 0.7718, Epoch 10
     # [Val] Kappa: 0.8176 Accuracy: 0.6625 Precision: 0.6530 Recall: 0.6625, Epoch 18 GausBlur_CLAHE
     # [Val] Kappa: 0.7306 Accuracy: 0.5500 Precision: 0.4860 Recall: 0.5500, Epoch 19 tb3_train with DeepDiR on the trained model with APTOS
+    # [Val] Kappa: 0.8062 Accuracy: 0.6150 Precision: 0.5291 Recall: 0.6150  Epoch 20 t_c_1_attention_ (self)
+    # [Val] Best kappa: 0.8290, Epoch 11 Epoch 11 t_c_1_channel attention_with default_transformation
