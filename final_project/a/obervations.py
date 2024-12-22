@@ -10,3 +10,7 @@
 
 # from b folder
 # current best on test set is .8308 (file name: 03_train_with_DeepDRiD.ipynb) deepDRIiD dataset trained on APTOS model
+
+
+# from c folder
+# apply attention mechanism 
